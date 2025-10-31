@@ -1,0 +1,34 @@
+# --- Python & entorno ---
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+env/
+venv/
+.venv/
+ENV/
+.env
+.env.*
+.DS_Store
+
+# --- Build / distribuciones ---
+build/
+dist/
+*.egg-info/
+
+# --- Datos temporales del proyecto ---
+storage/temp/
+storage/data/
+
+# --- Secretos / claves ---
+# Service account de Firebase (no subir a repos públicos)
+fletapp-*.json
+credentials.json
+
+# Nota: si necesitas desplegar en Render sin variables de entorno,
+# y tu repo es PRIVADO, puedes forzar temporalmente la subida de
+# este archivo ignorado con:
+#   git add -f fletapp-b39c2-firebase-adminsdk-fbsvc-c36b346f8b.json
+#   git commit -m "(solo pruebas) incluir service account"
+#   git push
+# Luego, elimínalo del repo y deja este .gitignore activo.

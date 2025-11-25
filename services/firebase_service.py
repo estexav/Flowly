@@ -198,3 +198,50 @@ def delete_transaction(transaction_id):
     except Exception as e:
         print(f"Error deleting transaction: {e}")
         return {"error": str(e)}
+
+def get_user_recurrings(user_id: str):
+    recurrings_ref = db.collection("recurrings")
+    query = recurrings_ref.where(filter=firestore.FieldFilter("userId", "==", user_id)).stream()
+    items = []
+    for doc in query:
+        d = doc.to_dict()
+        d["id"] = doc.id
+        items.append(d)
+    return items
+
+def add_recurring(user_id: str, data: dict):
+    data["userId"] = user_id
+    try:
+        doc_ref = db.collection("recurrings").add(data)
+        return {"success": True, "id": doc_ref[1].id}
+    except Exception as e:
+        print(f"Error adding recurring: {e}")
+        return {"error": str(e)}
+
+def update_recurring(recurring_id: str, updated_data: dict):
+    try:
+        db.collection("recurrings").document(recurring_id).update(updated_data)
+        return {"success": True}
+    except Exception as e:
+        print(f"Error updating recurring: {e}")
+        return {"error": str(e)}
+
+def delete_recurring(recurring_id: str):
+    try:
+        db.collection("recurrings").document(recurring_id).delete()
+        return {"success": True}
+    except Exception as e:
+        print(f"Error deleting recurring: {e}")
+        return {"error": str(e)}
+
+def get_recurring_by_id(recurring_id: str):
+    try:
+        doc_ref = db.collection("recurrings").document(recurring_id).get()
+        if doc_ref.exists:
+            data = doc_ref.to_dict()
+            data["id"] = doc_ref.id
+            return data
+        return None
+    except Exception as e:
+        print(f"Error getting recurring by ID: {e}")
+        return None

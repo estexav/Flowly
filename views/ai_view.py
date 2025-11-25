@@ -1,7 +1,9 @@
 import os
 import flet as ft
 import asyncio
-from services.firebase_service import get_user_transactions
+import datetime
+import calendar
+from services.firebase_service import get_user_transactions, get_user_recurrings
 from utils.offline_store import get_cached_transactions, set_cached_transactions, sync_pending_transactions
 from services.finance_ai_api import chat_finance, predict_spending, quick_prompt_response
 
@@ -98,6 +100,89 @@ class AIView(ft.View):
             ],
         )
 
+        self.balance_value = ft.Text("$0.00", size=16, weight=ft.FontWeight.BOLD, color=(ft.Colors.GREEN_300 if self._is_dark() else ft.Colors.GREEN_900))
+        self.daily_avg_value = ft.Text("$0.00", size=16, weight=ft.FontWeight.BOLD)
+        self.autonomy_chip = ft.Chip(label=ft.Text("0 días"))
+        self.next_income_date = ft.Text("")
+        self.next_income_amount = ft.Text("$0.00")
+
+        self.pb_30 = ft.ProgressBar(value=0.0)
+        self.pb_60 = ft.ProgressBar(value=0.0)
+        self.pb_90 = ft.ProgressBar(value=0.0)
+        self.s30_text = ft.Text("$0.00", color=ft.Colors.GREEN_300 if self._is_dark() else ft.Colors.GREEN_900)
+        self.s60_text = ft.Text("$0.00", color=ft.Colors.GREEN_300 if self._is_dark() else ft.Colors.GREEN_900)
+        self.s90_text = ft.Text("$0.00", color=ft.Colors.GREEN_300 if self._is_dark() else ft.Colors.GREEN_900)
+
+        self.recurring_list = ft.Column(spacing=8)
+        self.advice_text = ft.Text("", selectable=True)
+
+        status_card = ft.Card(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Row([ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE), ft.Text("Estado financiero")], alignment=ft.MainAxisAlignment.START, spacing=8),
+                    ft.Row([ft.Text("Balance actual"), self.balance_value], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ]),
+                padding=15,
+            ),
+            elevation=4,
+        )
+
+        actual_card = ft.Card(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Estado Actual", size=18, weight=ft.FontWeight.BOLD),
+                    ft.Row([ft.Text("Balance actual"), self.balance_value], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Row([ft.Text("Gasto diario promedio"), self.daily_avg_value], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Row([ft.Text("Días de autonomía"), self.autonomy_chip], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Row([ft.Text("Próximo ingreso esperado"), self.next_income_date], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Row([ft.Text("Monto estimado"), self.next_income_amount], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ]),
+                padding=15,
+            ),
+            elevation=4,
+            expand=1,
+        )
+
+        projection_card = ft.Card(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Proyección de Ahorro", size=18, weight=ft.FontWeight.BOLD),
+                    ft.Row([ft.Text("En 30 días"), self.s30_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    self.pb_30,
+                    ft.Row([ft.Text("En 60 días"), self.s60_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    self.pb_60,
+                    ft.Row([ft.Text("En 90 días"), self.s90_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    self.pb_90,
+                ]),
+                padding=15,
+            ),
+            elevation=4,
+            expand=1,
+        )
+
+        recurrent_card = ft.Card(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Gastos Recurrentes Detectados", size=18, weight=ft.FontWeight.BOLD),
+                    ft.Text("Estos gastos se repiten regularmente. Presupuesta para ellos."),
+                    self.recurring_list,
+                ]),
+                padding=15,
+            ),
+            elevation=4,
+        )
+
+        advice_card = ft.Card(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Consejos Inteligentes", size=18, weight=ft.FontWeight.BOLD),
+                    self.advice_text,
+                ]),
+                padding=15,
+            ),
+            elevation=4,
+        )
+
         # Layout con tarjetas
         chat_card = ft.Card(
             content=ft.Container(
@@ -132,9 +217,12 @@ class AIView(ft.View):
         # Mantener scroll de la columna y añadir un spacer inferior para evitar solape con la barra
         self.controls = [
             ft.Column([
+                status_card,
+                ft.Row([actual_card, projection_card], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                recurrent_card,
+                advice_card,
                 chat_card,
-                pred_card,
-                ft.Container(height=80),  # espacio inferior
+                ft.Container(height=60),
             ], expand=True, scroll=ft.ScrollMode.ADAPTIVE)
         ]
 
@@ -151,81 +239,90 @@ class AIView(ft.View):
         user_id = self.page.session.get("user_id")
         if user_id:
             self._loading = True
-            # Mostrar loader temporal encima del chat
-            self.chat_list.controls.clear()
-            self.chat_list.controls.append(self.loader_container)
-            self.page.update()
             loop = asyncio.get_event_loop()
             try:
+                recs = []
                 self.transactions = await loop.run_in_executor(None, get_user_transactions, user_id)
+                recs = await loop.run_in_executor(None, get_user_recurrings, user_id)
                 if getattr(self, "page", None) and self._mounted:
                     await set_cached_transactions(self.page, user_id, self.transactions)
             except Exception:
                 if getattr(self, "page", None):
+                    from utils.offline_store import get_cached_recurrings
                     self.transactions = await get_cached_transactions(self.page, user_id)
-            # Cargar predicción inicial
+                    recs = await get_cached_recurrings(self.page, user_id)
             try:
-                pred = predict_spending(self.transactions)
+                def monthly_equiv(amount: float, freq: str) -> float:
+                    f = (freq or "Mensual").lower()
+                    if f.startswith("semanal"):
+                        return amount * 4.33
+                    if f.startswith("quincenal"):
+                        return amount * 2.0
+                    if f.startswith("mensual"):
+                        return amount
+                    if f.startswith("bimestral"):
+                        return amount / 2.0
+                    if f.startswith("trimestral"):
+                        return amount / 3.0
+                    if f.startswith("anual"):
+                        return amount / 12.0
+                    return amount
+                synth = []
+                for r in recs or []:
+                    amt = monthly_equiv(float(r.get("amount", 0.0) or 0.0), r.get("frequency", "Mensual"))
+                    synth.append({
+                        "amount": amt,
+                        "type": r.get("type", "Gasto"),
+                        "category": r.get("category", "Recurrente"),
+                        "description": r.get("description", "Recurrente"),
+                        "date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                    })
+                tx_for_pred = list(self.transactions) + synth
+                pred = predict_spending(tx_for_pred)
                 summary = pred.get("summary", {})
-                self.pred_summary_text.value = (
-                    f"Resumen: ingresos ${summary.get('incomes', 0):.2f}, "
-                    f"gastos ${summary.get('expenses', 0):.2f}, "
-                    f"disponible ${summary.get('disposable', 0):.2f}"
-                )
-                # Actualizar métricas
-                self.incomes_text.value = f"${summary.get('incomes', 0):.2f}"
-                self.expenses_text.value = f"${summary.get('expenses', 0):.2f}"
-                self.disposable_text.value = f"${summary.get('disposable', 0):.2f}"
+                incomes = float(summary.get("incomes", 0.0) or 0.0)
+                expenses = float(summary.get("expenses", 0.0) or 0.0)
+                disposable = float(summary.get("disposable", 0.0) or 0.0)
+                self.balance_value.value = f"${disposable:.2f}"
+                daily_avg = (expenses / 30.0) if expenses > 0 else 0.0
+                self.daily_avg_value.value = f"${daily_avg:.2f}"
+                autonomy_days = int(disposable / daily_avg) if daily_avg > 0 else 0
+                self.autonomy_chip.label = ft.Text(f"{autonomy_days} días")
+                now = datetime.datetime.now()
+                nm = (now.month % 12) + 1
+                ny = now.year + (1 if now.month == 12 else 0)
+                self.next_income_date.value = f"1 {calendar.month_name[nm][:3].lower()}"
+                self.next_income_amount.value = f"${incomes:.2f}"
+
+                s30 = max(disposable, 0.0)
+                s60 = s30 * 2
+                s90 = s30 * 3
+                mx = max(s90, 1.0)
+                self.s30_text.value = f"+${s30:.2f}"
+                self.s60_text.value = f"+${s60:.2f}"
+                self.s90_text.value = f"+${s90:.2f}"
+                self.pb_30.value = s30 / mx
+                self.pb_60.value = s60 / mx
+                self.pb_90.value = s90 / mx
+
                 by_cat = summary.get("by_category", {})
-                suggested = pred.get("suggested_budget", {})
-                rows = []
-                for cat, current in by_cat.items():
-                    rows.append(ft.DataRow(cells=[
-                        ft.DataCell(ft.Text(cat)),
-                        ft.DataCell(ft.Text(f"${current:.2f}", text_align=ft.TextAlign.RIGHT)),
-                        ft.DataCell(ft.Text(f"${suggested.get(cat, current):.2f}", text_align=ft.TextAlign.RIGHT)),
-                    ]))
-                self.pred_table.rows = rows or []
-                # Color dinámico para disponible
-                try:
-                    disp_val = float(summary.get("disposable", 0))
-                except Exception:
-                    disp_val = 0.0
-                if self._is_dark():
-                    self.disposable_text.color = ft.Colors.GREEN_300 if disp_val >= 0 else ft.Colors.RED_300
-                else:
-                    self.disposable_text.color = ft.Colors.GREEN_900 if disp_val >= 0 else ft.Colors.RED_900
-                # Barras de distribución
-                total = max(summary.get("expenses", 0.0), 1.0)
-                bars = []
-                for cat, val in by_cat.items():
-                    ratio = float(val) / float(total)
-                    bars.append(
-                        ft.Row([
-                            ft.Text(cat, width=140, color=(ft.Colors.WHITE if self._is_dark() else None)),
-                            ft.Container(
-                                content=ft.ProgressBar(value=ratio, bgcolor=ft.Colors.GREY_800 if self._is_dark() else ft.Colors.GREY_200, color=ft.Colors.BLUE_300 if self._is_dark() else ft.Colors.BLUE_600),
-                                width=300,
-                                height=12,
-                                border_radius=6,
-                            ),
-                            ft.Text(f"{ratio*100:.0f}%", width=60, text_align=ft.TextAlign.RIGHT, color=(ft.Colors.WHITE if self._is_dark() else None)),
-                        ], alignment=ft.MainAxisAlignment.START)
+                self.recurring_list.controls = []
+                for cat, val in sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:5]:
+                    self.recurring_list.controls.append(
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Column([ft.Text(cat, weight=ft.FontWeight.BOLD), ft.Text(f"Promedio: ${val:.2f} • Frecuencia: 1x")], expand=True),
+                                ft.Container(content=ft.Text(f"${val:.2f}"), padding=ft.padding.only(left=12, right=12, top=6, bottom=6), border_radius=16, bgcolor=ft.Colors.DEEP_PURPLE_400),
+                            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                            padding=8,
+                            border_radius=8,
+                        )
                     )
-                self.pred_bars.controls = bars
-                # Mostrar consejo en panel
-                self.pred_advice.value = pred.get("advice", "")
-                # Mensaje inicial en el chat
-                self.add_assistant_bubble("Hola, soy tu asistente financiero. ¿En qué te ayudo hoy?")
+
+                self.advice_text.value = pred.get("advice", "")
             except Exception:
                 pass
             self._loading = False
-            # Ocultar loader si está presente
-            try:
-                self.chat_list.controls.remove(self.loader_container)
-            except ValueError:
-                # Si ya no existe, continuar sin error
-                pass
             if getattr(self, "page", None) and self._mounted:
                 self.page.update()
             if getattr(self, "page", None) and self._mounted:

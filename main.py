@@ -8,11 +8,13 @@ from views.edit_transaction_view import EditTransactionView
 from views.reports_view import ReportsView
 from views.ai_view import AIView
 from views.profile_view import ProfileView
+from views.transactions_view import TransactionsView
 
 
 def main(page: ft.Page):
     page.title = "App Finanzas"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.theme_mode = ft.ThemeMode.DARK
 
     # Registrar Service Worker y enlazar el manifest cuando se cargue en web.
     try:
@@ -58,23 +60,28 @@ if ("serviceWorker" in navigator) {
             page.views.append(AIView(page))
         elif page.route == "/profile":
             page.views.append(ProfileView(page))
+        elif page.route == "/transactions":
+            page.views.append(TransactionsView(page))
         elif page.route.startswith("/edit_transaction/"):
             page.views.append(EditTransactionView(page))
 
-        if page.session.get("authenticated") and page.route in ["/dashboard", "/add_transaction", "/reports", "/ai", "/profile"]:
+        if page.session.get("authenticated") and page.route in ["/dashboard", "/transactions", "/add_transaction", "/reports", "/ai", "/profile"]:
             page.views[0].controls.append(
                 ft.NavigationBar(
                     selected_index=(
                         0 if page.route == "/dashboard" else (
-                            1 if page.route == "/add_transaction" else (
-                                2 if page.route == "/reports" else (
-                                    3 if page.route == "/ai" else 4
+                            1 if page.route == "/transactions" else (
+                                2 if page.route == "/add_transaction" else (
+                                    3 if page.route == "/reports" else (
+                                        4 if page.route == "/ai" else 5
+                                    )
                                 )
                             )
                         )
                     ),
                     destinations=[
                         ft.NavigationBarDestination(icon=ft.Icons.DASHBOARD, label="Dashboard"),
+                        ft.NavigationBarDestination(icon=ft.Icons.RECEIPT_LONG, label="Transacciones"),
                         ft.NavigationBarDestination(icon=ft.Icons.ADD_CARD, label="Add Transaction"),
                         ft.NavigationBarDestination(icon=ft.Icons.PIE_CHART, label="Reports"),
                         ft.NavigationBarDestination(icon=ft.Icons.SMART_TOY, label="IA"),
@@ -82,9 +89,11 @@ if ("serviceWorker" in navigator) {
                     ],
                     on_change=lambda e: page.go(
                         "/dashboard" if e.control.selected_index == 0 else (
-                            "/add_transaction" if e.control.selected_index == 1 else (
-                                "/reports" if e.control.selected_index == 2 else (
-                                    "/ai" if e.control.selected_index == 3 else "/profile"
+                            "/transactions" if e.control.selected_index == 1 else (
+                                "/add_transaction" if e.control.selected_index == 2 else (
+                                    "/reports" if e.control.selected_index == 3 else (
+                                        "/ai" if e.control.selected_index == 4 else "/profile"
+                                    )
                                 )
                             )
                         )

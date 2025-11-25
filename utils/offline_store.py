@@ -21,6 +21,16 @@ async def get_cached_transactions(page: ft.Page, user_id: str) -> List[Dict[str,
 async def set_cached_transactions(page: ft.Page, user_id: str, transactions: List[Dict[str, Any]]):
     await page.client_storage.set_async(_cache_key(user_id), transactions)
 
+def _recurring_key(user_id: str) -> str:
+    return f"cached_recurrings:{user_id}"
+
+async def get_cached_recurrings(page: ft.Page, user_id: str) -> List[Dict[str, Any]]:
+    data = await page.client_storage.get_async(_recurring_key(user_id))
+    return data or []
+
+async def set_cached_recurrings(page: ft.Page, user_id: str, recurrings: List[Dict[str, Any]]):
+    await page.client_storage.set_async(_recurring_key(user_id), recurrings)
+
 
 async def add_pending_transaction(page: ft.Page, user_id: str, tx: Dict[str, Any]):
     queue = await page.client_storage.get_async(_queue_key(user_id)) or []

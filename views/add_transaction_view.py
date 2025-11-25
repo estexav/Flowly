@@ -2,6 +2,7 @@ import flet as ft
 import datetime
 from services.firebase_service import add_transaction
 import asyncio
+from utils.offline_store import add_pending_transaction, get_cached_transactions, set_cached_transactions
 
 class AddTransactionView(ft.View):
     def __init__(self, page: ft.Page):
@@ -39,7 +40,23 @@ class AddTransactionView(ft.View):
             on_click=lambda _: (setattr(self.date_picker, 'open', True), self.page.update()),
         )
 
-        self.category_field = ft.TextField(label="Categoría (Opcional)")
+        self.category_dropdown = ft.Dropdown(
+            label="Categoría",
+            options=[
+                ft.dropdown.Option("Alimentación"),
+                ft.dropdown.Option("Transporte"),
+                ft.dropdown.Option("Vivienda"),
+                ft.dropdown.Option("Servicios"),
+                ft.dropdown.Option("Entretenimiento"),
+                ft.dropdown.Option("Salud"),
+                ft.dropdown.Option("Educación"),
+                ft.dropdown.Option("Compras"),
+                ft.dropdown.Option("Impuestos"),
+                ft.dropdown.Option("Deudas"),
+                ft.dropdown.Option("Otros"),
+            ],
+            value="Alimentación",
+        )
         self.message_text = ft.Text("", color=ft.Colors.RED_500)
 
         self.save_button = ft.ElevatedButton("Guardar Transacción", on_click=self.save_transaction)
@@ -60,7 +77,7 @@ class AddTransactionView(ft.View):
                         ],
                         alignment=ft.MainAxisAlignment.START
                     ),
-                    self.category_field,
+                    self.category_dropdown,
                     self.message_text,
                     ft.Row(
                         [
@@ -87,6 +104,8 @@ class AddTransactionView(ft.View):
             self.page.update()
 
     async def save_transaction(self, e):
+        if not getattr(self, "page", None):
+            return
         user_id = self.page.session.get("user_id")
         if not user_id:
             self.message_text.value = "Error: Usuario no autenticado."
@@ -113,7 +132,7 @@ class AddTransactionView(ft.View):
 
         transaction_type = self.type_dropdown.value
         transaction_date = self.selected_date_text.value
-        category = self.category_field.value if self.category_field.value else "General"
+        category = self.category_dropdown.value if self.category_dropdown.value else "Otros"
 
         transaction_data = {
             "amount": amount,
@@ -132,11 +151,29 @@ class AddTransactionView(ft.View):
         result = await loop.run_in_executor(None, add_transaction, user_id, transaction_data)
 
         if "error" in result:
-            self.message_text.value = f"Error al guardar: {result["error"]}"
-            self.message_text.color = ft.Colors.RED_500
+            # Guardar en cola local para sincronizar cuando haya conexión
+            if getattr(self, "page", None):
+                await add_pending_transaction(self.page, user_id, transaction_data)
+            # Actualizar caché local para que aparezca en la UI offline
+            if getattr(self, "page", None):
+                cached = await get_cached_transactions(self.page, user_id)
+                cached.append(transaction_data)
+                await set_cached_transactions(self.page, user_id, cached)
+
+            self.message_text.value = "Sin conexión: guardado en local. Se sincronizará al volver la red."
+            self.message_text.color = ft.Colors.ORANGE_700
+            self.page.update()
         else:
+            # Éxito: actualizar caché (para que el dashboard se refresque sin esperar)
+            if getattr(self, "page", None):
+                cached = await get_cached_transactions(self.page, user_id)
+                transaction_data_with_id = dict(transaction_data)
+                transaction_data_with_id["id"] = result.get("id")
+                cached.append(transaction_data_with_id)
+                await set_cached_transactions(self.page, user_id, cached)
+
             self.message_text.value = "Transacción guardada exitosamente!"
             self.message_text.color = ft.Colors.GREEN_500
             self.page.update()
-            await asyncio.sleep(1) # Give user time to read success message
+            await asyncio.sleep(1)
             self.page.go("/dashboard")

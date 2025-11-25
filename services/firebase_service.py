@@ -88,6 +88,58 @@ def login_user(email, password):
                 return {"error": f"Error de Firebase: {message}"}
         return {"error": "Error de conexión o servidor."}
 
+def change_password(id_token: str, new_password: str):
+    """Changes the user's password using Firebase Auth REST API.
+    Requires a valid idToken from a recent login.
+    """
+    rest_api_url = f"https://identitytoolkit.googleapis.com/v1/accounts:update?key={FIREBASE_WEB_API_KEY}"
+    payload = json.dumps({
+        "idToken": id_token,
+        "password": new_password,
+        "returnSecureToken": True,
+    })
+    try:
+        r = requests.post(rest_api_url, data=payload)
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error changing password: {e}")
+        try:
+            error_data = r.json().get("error", {})
+            message = error_data.get("message", "Unknown error")
+            # Map some common Firebase errors to friendly Spanish messages
+            friendly = {
+                "TOKEN_EXPIRED": "La sesión expiró. Vuelve a iniciar sesión.",
+                "INVALID_ID_TOKEN": "Sesión inválida. Vuelve a iniciar sesión.",
+                "WEAK_PASSWORD": "La contraseña debe tener al menos 6 caracteres.",
+            }.get(message, f"Error de Firebase: {message}")
+            return {"error": friendly}
+        except Exception:
+            return {"error": "Error de conexión o servidor."}
+
+def get_account_info(id_token: str):
+    """Obtiene información del usuario (incluyendo email) usando Firebase Auth REST API."""
+    rest_api_url = f"https://identitytoolkit.googleapis.com/v1/accounts:lookup?key={FIREBASE_WEB_API_KEY}"
+    payload = json.dumps({
+        "idToken": id_token,
+    })
+    try:
+        r = requests.post(rest_api_url, data=payload)
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error getting account info: {e}")
+        try:
+            error_data = r.json().get("error", {})
+            message = error_data.get("message", "Unknown error")
+            friendly = {
+                "TOKEN_EXPIRED": "La sesión expiró. Vuelve a iniciar sesión.",
+                "INVALID_ID_TOKEN": "Sesión inválida. Vuelve a iniciar sesión.",
+            }.get(message, f"Error de Firebase: {message}")
+            return {"error": friendly}
+        except Exception:
+            return {"error": "Error de conexión o servidor."}
+
 def get_firestore_client():
     return db
 

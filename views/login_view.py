@@ -34,6 +34,8 @@ class LoginView(ft.View):
         ]
 
     async def login_user(self, e):
+        if not getattr(self, "page", None):
+            return
         email = self.email_field.value
         password = self.password_field.value
         
@@ -56,11 +58,15 @@ class LoginView(ft.View):
         else:
             self.message_text.value = "¡Inicio de sesión exitoso! Redirigiendo..."
             self.message_text.color = ft.Colors.GREEN_500
-            self.page.session.set("authenticated", True)
-            self.page.session.set("user_id", result["localId"])
-            await self.page.client_storage.set_async("is_logged_in", True)
-            await self.page.client_storage.set_async("user_id", result["localId"])
-            self.page.go("/dashboard")
+            if getattr(self, "page", None):
+                self.page.session.set("authenticated", True)
+                self.page.session.set("user_id", result["localId"])
+                # Guardar datos del usuario para el perfil y cambios de contraseña
+                await self.page.client_storage.set_async("email", result.get("email"))
+                await self.page.client_storage.set_async("id_token", result.get("idToken"))
+                await self.page.client_storage.set_async("is_logged_in", True)
+                await self.page.client_storage.set_async("user_id", result["localId"])
+                self.page.go("/dashboard")
 
     def go_to_signup(self, e):
         print("Ir a la página de registro")

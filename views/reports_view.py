@@ -1,6 +1,7 @@
 import flet as ft
 from services.firebase_service import get_user_transactions
 import asyncio
+from utils.offline_store import get_cached_transactions, set_cached_transactions, sync_pending_transactions
 import math
 
 from utils.calculations import calculate_transaction_summary
@@ -11,6 +12,7 @@ class ReportsView(ft.View):
         self.page = page
         self.route = "/reports"
         self.transactions = []
+        self._mounted = False
 
         self.appbar = ft.AppBar(
             title=ft.Text("Informes"),
@@ -77,7 +79,11 @@ class ReportsView(ft.View):
         ]
 
     def did_mount(self):
+        self._mounted = True
         self.page.run_task(self.load_reports)
+
+    def will_unmount(self):
+        self._mounted = False
 
     def on_chart_event(self, e: ft.PieChartEvent):
         for idx, section in enumerate(self.pie_chart.sections):
@@ -90,10 +96,18 @@ class ReportsView(ft.View):
         self.pie_chart.update()
 
     async def load_reports(self):
+        if not getattr(self, "page", None) or not self._mounted:
+            return
         user_id = self.page.session.get("user_id")
         if user_id:
             loop = asyncio.get_event_loop()
-            self.transactions = await loop.run_in_executor(None, get_user_transactions, user_id)
+            try:
+                self.transactions = await loop.run_in_executor(None, get_user_transactions, user_id)
+                if getattr(self, "page", None) and self._mounted:
+                    await set_cached_transactions(self.page, user_id, self.transactions)
+            except Exception:
+                if getattr(self, "page", None):
+                    self.transactions = await get_cached_transactions(self.page, user_id)
 
             total_income, total_expenses, _ = calculate_transaction_summary(self.transactions)
 
@@ -106,7 +120,11 @@ class ReportsView(ft.View):
 
 
 
-            self.page.update()
+            if getattr(self, "page", None) and self._mounted:
+                self.page.update()
+            # Sincronizar en segundo plano si hay pendientes
+            if getattr(self, "page", None) and self._mounted:
+                asyncio.create_task(sync_pending_transactions(self.page, user_id))
 
     def _create_pie_chart_data(self, transactions):
         category_data = {}
@@ -142,4 +160,3 @@ class ReportsView(ft.View):
             ))
             color_index += 1
         return chart_data
-

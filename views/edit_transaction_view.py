@@ -21,6 +21,23 @@ class EditTransactionView(ft.View):
             ],
             expand=True
         )
+        self.category_dropdown = ft.Dropdown(
+            label="Categoría",
+            options=[
+                ft.dropdown.Option("Alimentación"),
+                ft.dropdown.Option("Transporte"),
+                ft.dropdown.Option("Vivienda"),
+                ft.dropdown.Option("Servicios"),
+                ft.dropdown.Option("Entretenimiento"),
+                ft.dropdown.Option("Salud"),
+                ft.dropdown.Option("Educación"),
+                ft.dropdown.Option("Compras"),
+                ft.dropdown.Option("Impuestos"),
+                ft.dropdown.Option("Deudas"),
+                ft.dropdown.Option("Otros"),
+            ],
+            expand=True
+        )
         self.date_picker = ft.DatePicker(
             first_date=datetime.datetime(2023, 1, 1),
             last_date=datetime.datetime(2024, 12, 31),
@@ -45,6 +62,7 @@ class EditTransactionView(ft.View):
                     self.description_field,
                     self.amount_field,
                     self.type_dropdown,
+                    self.category_dropdown,
                     ft.Row([self.date_button, self.selected_date_text]),
                     ft.ElevatedButton("Guardar Cambios", on_click=self.save_transaction),
                     ft.ElevatedButton("Eliminar Transacción", on_click=self.delete_transaction, style=ft.ButtonStyle(bgcolor=ft.Colors.RED_500)),
@@ -67,6 +85,7 @@ class EditTransactionView(ft.View):
                 self.description_field.value = self.transaction_data.get("description", "")
                 self.amount_field.value = str(self.transaction_data.get("amount", 0.0))
                 self.type_dropdown.value = self.transaction_data.get("type", "Ingreso")
+                self.category_dropdown.value = self.transaction_data.get("category", "Otros")
                 self.selected_date_text.value = self.transaction_data.get("date", "")
                 self.page.update()
             else:
@@ -90,6 +109,7 @@ class EditTransactionView(ft.View):
             "description": self.description_field.value,
             "amount": float(self.amount_field.value),
             "type": self.type_dropdown.value,
+            "category": self.category_dropdown.value or "Otros",
             "date": self.selected_date_text.value,
         }
 

@@ -48,18 +48,15 @@ class DashboardView(ft.View):
         self.controls = [
             ft.Column(
                 [
-                    ft.Row(
-                        [self.income_card, self.expense_card, self.balance_card],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        expand=True,
-                    ),
-                    ft.Row(
-                        [
-                            ft.Card(content=ft.Container(content=ft.Column([ft.Text("Gastos por Categoría", weight=ft.FontWeight.BOLD), self.pie_chart]), padding=16), elevation=4, expand=1),
-                            ft.Card(content=ft.Container(content=ft.Column([ft.Text("Comparación Mensual", weight=ft.FontWeight.BOLD), self.bar_chart]), padding=16), elevation=4, expand=1),
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    ),
+                    ft.ResponsiveRow([
+                        ft.Container(content=self.income_card, col={"xs":12, "md":12, "lg":4}),
+                        ft.Container(content=self.expense_card, col={"xs":12, "md":12, "lg":4}),
+                        ft.Container(content=self.balance_card, col={"xs":12, "md":12, "lg":4}),
+                    ], run_spacing=10),
+                    ft.ResponsiveRow([
+                        ft.Container(content=ft.Card(content=ft.Container(content=ft.Column([ft.Text("Gastos por Categoría", weight=ft.FontWeight.BOLD), self.pie_chart]), padding=16), elevation=4), col={"xs":12, "md":12, "lg":6}),
+                        ft.Container(content=ft.Card(content=ft.Container(content=ft.Column([ft.Text("Comparación Mensual", weight=ft.FontWeight.BOLD), self.bar_chart]), padding=16), elevation=4), col={"xs":12, "md":12, "lg":6}),
+                    ], run_spacing=10),
                     ft.Card(
                         content=ft.Container(
                             content=ft.Column([ft.Text("Detalle por Categoría", weight=ft.FontWeight.BOLD), self.category_details]),

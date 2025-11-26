@@ -4,8 +4,8 @@ import asyncio
 import datetime
 import calendar
 from services.firebase_service import get_user_transactions, get_user_recurrings
-from utils.offline_store import get_cached_transactions, set_cached_transactions, sync_pending_transactions
-from services.finance_ai_api import chat_finance, predict_spending, quick_prompt_response
+from utils.offline_store import get_cached_transactions, set_cached_transactions, sync_pending_transactions, get_cached_recurrings
+from services.finance_ai_api import chat_finance, predict_spending, quick_prompt_response, summarize_transactions
 
 
 class AIView(ft.View):
@@ -34,11 +34,6 @@ class AIView(ft.View):
             )
         )
         chip_text_color = ft.Colors.WHITE if self._is_dark() else None
-        self.ia_chip = ft.Chip(
-            label=ft.Text("IA activa" if ia_active else "IA (modo heurístico)", color=chip_text_color),
-            bgcolor=chip_bg,
-            leading=ft.Icon(ft.Icons.SMART_TOY, color=ft.Colors.GREEN_300 if self._is_dark() else (ft.Colors.GREEN_600 if ia_active else ft.Colors.GREY_600))
-        )
 
         # Chat (solo respuestas de chips)
         self.chat_list = ft.ListView(expand=1, spacing=10, auto_scroll=True)
@@ -71,7 +66,7 @@ class AIView(ft.View):
             ft.Container(content=ft.Column([ft.Text("Ingresos", color=label_color), self.incomes_text]), padding=10, bgcolor=income_bg, border_radius=8, border=ft.border.all(1, ft.Colors.with_opacity(0.25, ft.Colors.GREEN))),
             ft.Container(content=ft.Column([ft.Text("Gastos", color=label_color), self.expenses_text]), padding=10, bgcolor=expense_bg, border_radius=8, border=ft.border.all(1, ft.Colors.with_opacity(0.25, ft.Colors.RED))),
             ft.Container(content=ft.Column([ft.Text("Disponible", color=label_color), self.disposable_text]), padding=10, bgcolor=dispo_bg, border_radius=8, border=ft.border.all(1, ft.Colors.with_opacity(0.25, ft.Colors.BLUE_GREY))),
-        ], spacing=10)
+        ], spacing=10, wrap=True)
 
         self.pred_summary_text = ft.Text("Resumen: ingresos $0.00, gastos $0.00, disponible $0.00", color=(ft.Colors.WHITE if self._is_dark() else None))
         # Aumentar contraste del encabezado de la tabla en modo oscuro
@@ -93,16 +88,17 @@ class AIView(ft.View):
 
         ia_status = "Activa" if ia_active else "Heurística"
         self.appbar = ft.AppBar(
-            title=ft.Text(f"Asistente de IA"),
+            title=ft.Text("Asistente de IA"),
             actions=[
-                self.ia_chip,
                 ft.IconButton(icon=ft.Icons.ARROW_BACK, tooltip="Volver", on_click=lambda e: self.page.go("/dashboard")),
             ],
         )
 
         self.balance_value = ft.Text("$0.00", size=16, weight=ft.FontWeight.BOLD, color=(ft.Colors.GREEN_300 if self._is_dark() else ft.Colors.GREEN_900))
+        self.balance_status_title = ft.Text("Estado Financiero", size=18, weight=ft.FontWeight.BOLD, color=(ft.Colors.WHITE if self._is_dark() else None))
+        self.balance_status_msg = ft.Text("", color=(ft.Colors.WHITE if self._is_dark() else None))
+        self.balance_status_icon = ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=(ft.Colors.GREEN_300 if self._is_dark() else ft.Colors.GREEN_600))
         self.daily_avg_value = ft.Text("$0.00", size=16, weight=ft.FontWeight.BOLD)
-        self.autonomy_chip = ft.Chip(label=ft.Text("0 días"))
         self.next_income_date = ft.Text("")
         self.next_income_amount = ft.Text("$0.00")
 
@@ -114,16 +110,15 @@ class AIView(ft.View):
         self.s90_text = ft.Text("$0.00", color=ft.Colors.GREEN_300 if self._is_dark() else ft.Colors.GREEN_900)
 
         self.recurring_list = ft.Column(spacing=8)
-        self.advice_text = ft.Text("", selectable=True)
 
+        self.status_container = ft.Container(
+            content=ft.Column([
+                ft.Row([self.balance_status_icon, self.balance_status_title], alignment=ft.MainAxisAlignment.START, spacing=8),
+            ]),
+            padding=15,
+        )
         status_card = ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Row([ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE), ft.Text("Estado financiero")], alignment=ft.MainAxisAlignment.START, spacing=8),
-                    ft.Row([ft.Text("Balance actual"), self.balance_value], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                ]),
-                padding=15,
-            ),
+            content=self.status_container,
             elevation=4,
         )
 
@@ -133,7 +128,6 @@ class AIView(ft.View):
                     ft.Text("Estado Actual", size=18, weight=ft.FontWeight.BOLD),
                     ft.Row([ft.Text("Balance actual"), self.balance_value], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ft.Row([ft.Text("Gasto diario promedio"), self.daily_avg_value], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    ft.Row([ft.Text("Días de autonomía"), self.autonomy_chip], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ft.Row([ft.Text("Próximo ingreso esperado"), self.next_income_date], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ft.Row([ft.Text("Monto estimado"), self.next_income_amount], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ]),
@@ -172,16 +166,7 @@ class AIView(ft.View):
             elevation=4,
         )
 
-        advice_card = ft.Card(
-            content=ft.Container(
-                content=ft.Column([
-                    ft.Text("Consejos Inteligentes", size=18, weight=ft.FontWeight.BOLD),
-                    self.advice_text,
-                ]),
-                padding=15,
-            ),
-            elevation=4,
-        )
+        
 
         # Layout con tarjetas
         chat_card = ft.Card(
@@ -218,9 +203,11 @@ class AIView(ft.View):
         self.controls = [
             ft.Column([
                 status_card,
-                ft.Row([actual_card, projection_card], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.ResponsiveRow([
+                    ft.Container(content=actual_card, col={"xs":12, "md":12, "lg":6}),
+                    ft.Container(content=projection_card, col={"xs":12, "md":12, "lg":6}),
+                ], run_spacing=10),
                 recurrent_card,
-                advice_card,
                 chat_card,
                 ft.Container(height=60),
             ], expand=True, scroll=ft.ScrollMode.ADAPTIVE)
@@ -244,7 +231,11 @@ class AIView(ft.View):
                 recs = []
                 self.transactions = await loop.run_in_executor(None, get_user_transactions, user_id)
                 recs = await loop.run_in_executor(None, get_user_recurrings, user_id)
-                if getattr(self, "page", None) and self._mounted:
+                cached_tx = await get_cached_transactions(self.page, user_id)
+                cached_recs = await get_cached_recurrings(self.page, user_id)
+                self.transactions = (self.transactions or []) + (cached_tx or [])
+                recs = (recs or []) + (cached_recs or [])
+                if getattr(self, "page", None) and self._mounted and self.transactions:
                     await set_cached_transactions(self.page, user_id, self.transactions)
             except Exception:
                 if getattr(self, "page", None):
@@ -278,23 +269,56 @@ class AIView(ft.View):
                         "date": datetime.datetime.now().strftime("%Y-%m-%d"),
                     })
                 tx_for_pred = list(self.transactions) + synth
+                incomes_total = 0.0
+                expenses_total = 0.0
+                for t in self.transactions or []:
+                    amt_t = float(t.get("amount", 0.0) or 0.0)
+                    typ_t = (t.get("type", "") or "").lower()
+                    if typ_t.startswith("ingreso"):
+                        incomes_total += amt_t
+                    elif typ_t.startswith("gasto"):
+                        expenses_total += amt_t
+                for r in recs or []:
+                    amt_r = monthly_equiv(float(r.get("amount", 0.0) or 0.0), r.get("frequency", "Mensual"))
+                    typ_r = (r.get("type", "") or "").lower()
+                    if typ_r.startswith("ingreso"):
+                        incomes_total += amt_r
+                    elif typ_r.startswith("gasto"):
+                        expenses_total += amt_r
+                disposable = incomes_total - expenses_total
                 pred = predict_spending(tx_for_pred)
-                summary = pred.get("summary", {})
-                incomes = float(summary.get("incomes", 0.0) or 0.0)
-                expenses = float(summary.get("expenses", 0.0) or 0.0)
-                disposable = float(summary.get("disposable", 0.0) or 0.0)
-                self.balance_value.value = f"${disposable:.2f}"
-                daily_avg = (expenses / 30.0) if expenses > 0 else 0.0
+                summary = pred.get("summary", {"incomes": incomes_total, "expenses": expenses_total, "disposable": disposable, "by_category": {}})
+                self.balance_value.value = f"${round(disposable, 2):.2f}"
+                if incomes_total == 0.0 and expenses_total == 0.0:
+                    self.balance_status_title.value = "Estado Financiero"
+                    self.balance_status_icon.name = ft.Icons.INFO_OUTLINE
+                    self.balance_status_icon.color = ft.Colors.BLUE_GREY_400
+                    self.balance_status_msg.value = "Sin datos. Agrega transacciones o fijos para ver tu estado."
+                    self.status_container.bgcolor = ft.Colors.with_opacity(0.08, ft.Colors.BLUE_GREY)
+                    self.balance_value.color = ft.Colors.BLUE_GREY_300 if self._is_dark() else ft.Colors.BLUE_GREY_900
+                elif disposable <= 0.0:
+                    self.balance_status_title.value = "Estado Financiero en Riesgo"
+                    self.balance_status_icon.name = ft.Icons.WARNING_AMBER
+                    self.balance_status_icon.color = ft.Colors.AMBER_400
+                    self.balance_status_msg.value = "Tu situación financiera está en riesgo. Tu balance actual es negativo."
+                    self.status_container.bgcolor = ft.Colors.with_opacity(0.10, ft.Colors.AMBER)
+                    self.balance_value.color = ft.Colors.RED_300 if self._is_dark() else ft.Colors.RED_900
+                else:
+                    self.balance_status_title.value = "Estado Financiero Saludable"
+                    self.balance_status_icon.name = ft.Icons.CHECK_CIRCLE_OUTLINE
+                    self.balance_status_icon.color = ft.Colors.GREEN_300 if self._is_dark() else ft.Colors.GREEN_600
+                    self.balance_status_msg.value = "Tu situación financiera es buena. Con tu balance actual de"
+                    self.status_container.bgcolor = ft.Colors.with_opacity(0.10, ft.Colors.GREEN)
+                    self.balance_value.color = ft.Colors.GREEN_300 if self._is_dark() else ft.Colors.GREEN_900
+                daily_avg = (expenses_total / 30.0) if expenses_total > 0 else 0.0
                 self.daily_avg_value.value = f"${daily_avg:.2f}"
-                autonomy_days = int(disposable / daily_avg) if daily_avg > 0 else 0
-                self.autonomy_chip.label = ft.Text(f"{autonomy_days} días")
                 now = datetime.datetime.now()
                 nm = (now.month % 12) + 1
                 ny = now.year + (1 if now.month == 12 else 0)
                 self.next_income_date.value = f"1 {calendar.month_name[nm][:3].lower()}"
-                self.next_income_amount.value = f"${incomes:.2f}"
+                self.next_income_amount.value = f"${incomes_total:.2f}"
 
-                s30 = max(disposable, 0.0)
+                s30 = max(round(disposable, 2), 0.0)
                 s60 = s30 * 2
                 s90 = s30 * 3
                 mx = max(s90, 1.0)
@@ -306,6 +330,9 @@ class AIView(ft.View):
                 self.pb_90.value = s90 / mx
 
                 by_cat = summary.get("by_category", {})
+                self.incomes_text.value = f"${incomes_total:.2f}"
+                self.expenses_text.value = f"${expenses_total:.2f}"
+                self.disposable_text.value = f"${round(disposable, 2):.2f}"
                 self.recurring_list.controls = []
                 for cat, val in sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:5]:
                     self.recurring_list.controls.append(
@@ -319,7 +346,7 @@ class AIView(ft.View):
                         )
                     )
 
-                self.advice_text.value = pred.get("advice", "")
+                
             except Exception:
                 pass
             self._loading = False

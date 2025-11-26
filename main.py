@@ -12,7 +12,7 @@ from views.transactions_view import TransactionsView
 
 
 def main(page: ft.Page):
-    page.title = "App Finanzas"
+    page.title = "Flowly"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.theme_mode = ft.ThemeMode.DARK
 
@@ -79,11 +79,12 @@ if ("serviceWorker" in navigator) {
                             )
                         )
                     ),
+                    label_behavior=ft.NavigationBarLabelBehavior.ALWAYS_HIDE,
                     destinations=[
                         ft.NavigationBarDestination(icon=ft.Icons.DASHBOARD, label="Dashboard"),
                         ft.NavigationBarDestination(icon=ft.Icons.RECEIPT_LONG, label="Transacciones"),
-                        ft.NavigationBarDestination(icon=ft.Icons.ADD_CARD, label="Add Transaction"),
-                        ft.NavigationBarDestination(icon=ft.Icons.PIE_CHART, label="Reports"),
+                        ft.NavigationBarDestination(icon=ft.Icons.ADD_CARD, label="Agregar"),
+                        ft.NavigationBarDestination(icon=ft.Icons.PIE_CHART, label="Reportes"),
                         ft.NavigationBarDestination(icon=ft.Icons.SMART_TOY, label="IA"),
                         ft.NavigationBarDestination(icon=ft.Icons.PERSON, label="Perfil"),
                     ],

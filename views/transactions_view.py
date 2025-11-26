@@ -1,7 +1,7 @@
 import flet as ft
 import asyncio
 from services.firebase_service import get_user_transactions, delete_transaction, get_user_recurrings, delete_recurring
-from utils.offline_store import get_cached_transactions, set_cached_transactions, sync_pending_transactions
+from utils.offline_store import get_cached_transactions, set_cached_transactions, sync_pending_transactions, get_cached_recurrings, set_cached_recurrings
 
 
 class TransactionsView(ft.View):
@@ -13,6 +13,8 @@ class TransactionsView(ft.View):
         self.transactions = []
         self.recurrings = []
         self.view_mode = "transactions"
+        self._pending_delete_id = None
+        self._pending_rec_delete_id = None
 
         self.type_filter = ft.Dropdown(
             label="Tipo",
@@ -50,13 +52,10 @@ class TransactionsView(ft.View):
                         content=ft.Column(
                             [
                                 ft.Text("Transacciones", size=20, weight=ft.FontWeight.BOLD),
-                                ft.Row(
-                                    [
-                                        ft.Container(content=self.type_filter, width=220),
-                                        ft.Container(content=self.category_filter, width=260),
-                                    ],
-                                    alignment=ft.MainAxisAlignment.START,
-                                ),
+                                ft.ResponsiveRow([
+                                    ft.Container(content=self.type_filter, col={"xs":12, "md":6, "lg":6}),
+                                    ft.Container(content=self.category_filter, col={"xs":12, "md":6, "lg":6}),
+                                ], run_spacing=8),
                                 self.mode_row,
                                 self.list_view,
                                 self.rec_list,
@@ -87,18 +86,32 @@ class TransactionsView(ft.View):
         if user_id:
             loop = asyncio.get_event_loop()
             try:
-                self.transactions = await loop.run_in_executor(None, get_user_transactions, user_id)
-                self.recurrings = await loop.run_in_executor(None, get_user_recurrings, user_id)
+                tx_server = await loop.run_in_executor(None, get_user_transactions, user_id)
+                rec_server = await loop.run_in_executor(None, get_user_recurrings, user_id)
+                tx_cached = await get_cached_transactions(self.page, user_id)
+                rec_cached = await get_cached_recurrings(self.page, user_id)
+
+                def dedupe(items, key_fields):
+                    seen = set()
+                    result = []
+                    for it in (items or []):
+                        key = it.get("id") or tuple(str(it.get(f, "")) for f in key_fields)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        result.append(it)
+                    return result
+
+                self.transactions = dedupe((tx_server or []) + (tx_cached or []), ["amount", "description", "date", "type", "category"])
+                self.recurrings = dedupe((rec_server or []) + (rec_cached or []), ["amount", "description", "frequency", "type", "category"])
+
                 if getattr(self, "page", None) and self._mounted:
                     await set_cached_transactions(self.page, user_id, self.transactions)
+                    await set_cached_recurrings(self.page, user_id, self.recurrings)
             except Exception:
                 if getattr(self, "page", None):
                     self.transactions = await get_cached_transactions(self.page, user_id)
-                    try:
-                        from utils.offline_store import get_cached_recurrings
-                        self.recurrings = await get_cached_recurrings(self.page, user_id)
-                    except Exception:
-                        self.recurrings = []
+                    self.recurrings = await get_cached_recurrings(self.page, user_id)
 
             categories = sorted({t.get("category", "Otros") for t in (self.transactions + self.recurrings) if isinstance(t.get("category"), str)})
             if not categories:
@@ -209,8 +222,10 @@ class TransactionsView(ft.View):
                                         ft.Text(desc, size=16, weight=ft.FontWeight.BOLD),
                                         self._category_chip(cat),
                                     ],
-                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                    alignment=ft.MainAxisAlignment.START,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                    spacing=8,
+                                    wrap=True,
                                 ),
                                 ft.Text(date, size=12, color=ft.Colors.GREY_600),
                             ],
@@ -221,16 +236,12 @@ class TransactionsView(ft.View):
                             size=16,
                             color=amount_color,
                         ),
-                        ft.IconButton(
-                            icon=ft.Icons.EDIT,
-                            tooltip="Editar",
-                            on_click=lambda e, tid=t.get("id"): self.page.go(f"/edit_transaction/{tid}") if tid else None,
-                        ),
+                        
                         ft.IconButton(
                             icon=ft.Icons.DELETE_OUTLINE,
                             tooltip="Eliminar",
                             icon_color=ft.Colors.RED_400,
-                            on_click=lambda e, tid=t.get("id"): self.page.run_task(self._delete_transaction(tid)) if tid else None,
+                            on_click=lambda e, tid=t.get("id"): self._trigger_delete_transaction(tid) if tid else None,
                         ),
                     ],
                     alignment=ft.MainAxisAlignment.START,
@@ -262,11 +273,10 @@ class TransactionsView(ft.View):
                             ft.Text(desc, size=16, weight=ft.FontWeight.BOLD),
                             self._category_chip(cat),
                             chip_freq,
-                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, wrap=True),
                     ], expand=True),
                     ft.Text(f"{'+' if rtype == 'Ingreso' else '-'}${abs(amount):.2f}", size=16, color=amount_color),
-                    ft.IconButton(icon=ft.Icons.EDIT, tooltip="Editar", on_click=lambda e, rid=r.get("id"): self.page.go(f"/edit_transaction/rec:{rid}") if rid else None),
-                    ft.IconButton(icon=ft.Icons.DELETE_OUTLINE, tooltip="Eliminar", icon_color=ft.Colors.RED_400, on_click=lambda e, rid=r.get("id"): self.page.run_task(self._delete_recurring(rid)) if rid else None),
+                    ft.IconButton(icon=ft.Icons.DELETE_OUTLINE, tooltip="Eliminar", icon_color=ft.Colors.RED_400, on_click=lambda e, rid=r.get("id"): self._trigger_delete_recurring(rid) if rid else None),
                 ], alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 padding=10,
                 border_radius=12,
@@ -286,15 +296,38 @@ class TransactionsView(ft.View):
         if getattr(self, "page", None) and self._mounted:
             self.page.update()
 
+    def _trigger_delete_transaction(self, transaction_id: str | None):
+        if not transaction_id:
+            return
+        self._pending_delete_id = transaction_id
+        self.page.run_task(self._delete_transaction_task)
+
+    async def _delete_transaction_task(self):
+        await self._delete_transaction(self._pending_delete_id)
+        self._pending_delete_id = None
+
     async def _delete_recurring(self, recurring_id: str | None):
         if not recurring_id:
             return
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, delete_recurring, recurring_id)
         self.recurrings = [r for r in self.recurrings if r.get("id") != recurring_id]
+        user_id = self.page.session.get("user_id")
+        if user_id:
+            await set_cached_recurrings(self.page, user_id, self.recurrings)
         self.apply_filters()
         if getattr(self, "page", None) and self._mounted:
             self.page.update()
+
+    def _trigger_delete_recurring(self, recurring_id: str | None):
+        if not recurring_id:
+            return
+        self._pending_rec_delete_id = recurring_id
+        self.page.run_task(self._delete_recurring_task)
+
+    async def _delete_recurring_task(self):
+        await self._delete_recurring(self._pending_rec_delete_id)
+        self._pending_rec_delete_id = None
 
     def set_mode(self, mode: str):
         self.view_mode = mode

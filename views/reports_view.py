@@ -1,7 +1,7 @@
 import flet as ft
 from services.firebase_service import get_user_transactions, get_user_recurrings
 import asyncio
-from utils.offline_store import get_cached_transactions, set_cached_transactions, sync_pending_transactions
+from utils.offline_store import get_cached_transactions, set_cached_transactions, sync_pending_transactions, get_cached_recurrings, set_cached_recurrings
 import math
 from datetime import datetime, date
 
@@ -95,7 +95,10 @@ class ReportsView(ft.View):
         self.controls = [
             ft.Column([
                 header_card,
-                ft.Row([left_card, right_card], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.ResponsiveRow([
+                    ft.Container(content=left_card, col={"xs":12, "md":12, "lg":6}),
+                    ft.Container(content=right_card, col={"xs":12, "md":12, "lg":6}),
+                ], run_spacing=10),
             ], expand=True, scroll=ft.ScrollMode.ADAPTIVE)
         ]
 
@@ -123,13 +126,31 @@ class ReportsView(ft.View):
         if user_id:
             loop = asyncio.get_event_loop()
             try:
-                self.transactions = await loop.run_in_executor(None, get_user_transactions, user_id)
-                self.recurrings = await loop.run_in_executor(None, get_user_recurrings, user_id)
+                tx_server = await loop.run_in_executor(None, get_user_transactions, user_id)
+                rec_server = await loop.run_in_executor(None, get_user_recurrings, user_id)
+                tx_cached = await get_cached_transactions(self.page, user_id)
+                rec_cached = await get_cached_recurrings(self.page, user_id)
+
+                # Deduplicar por id; si no hay id, usar tupla básica como clave
+                def dedupe(items, key_fields):
+                    seen = set()
+                    result = []
+                    for it in (items or []):
+                        key = it.get("id") or tuple(str(it.get(f, "")) for f in key_fields)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        result.append(it)
+                    return result
+
+                self.transactions = dedupe((tx_server or []) + (tx_cached or []), ["amount", "description", "date", "type", "category"])
+                self.recurrings = dedupe((rec_server or []) + (rec_cached or []), ["amount", "description", "frequency", "type", "category"])
+
                 if getattr(self, "page", None) and self._mounted:
                     await set_cached_transactions(self.page, user_id, self.transactions)
+                    await set_cached_recurrings(self.page, user_id, self.recurrings)
             except Exception:
                 if getattr(self, "page", None):
-                    from utils.offline_store import get_cached_recurrings
                     self.transactions = await get_cached_transactions(self.page, user_id)
                     self.recurrings = await get_cached_recurrings(self.page, user_id)
 
@@ -199,23 +220,31 @@ class ReportsView(ft.View):
         except Exception:
             spend = 0.0
         incomes_m, expenses_m, fixed_m, savings_m, balance_m = self._compute_metrics()
-        new_balance = max(savings_m - spend, 0.0)
+        new_balance_real = savings_m - spend
         perc = (spend / incomes_m) if incomes_m > 0 else 0.0
-        margin = new_balance - fixed_m
-        status = "Seguro" if perc <= 0.03 else ("Procede con Precaución" if perc <= 0.08 else "No recomendado")
+        margin = new_balance_real - fixed_m
+        status = (
+            "Seguro" if (perc <= 0.03 and margin >= 0) else (
+                "Procede con Precaución" if (perc <= 0.08 and margin >= -fixed_m * 0.05) else "No recomendado"
+            )
+        )
         bg = ft.Colors.with_opacity(0.12, ft.Colors.GREEN) if status == "Seguro" else (ft.Colors.with_opacity(0.12, ft.Colors.ORANGE) if status == "Procede con Precaución" else ft.Colors.with_opacity(0.12, ft.Colors.RED))
         border_c = ft.Colors.GREEN_300 if status == "Seguro" else (ft.Colors.ORANGE_300 if status == "Procede con Precaución" else ft.Colors.RED_300)
         self.spend_result.bgcolor = bg
         self.spend_result.border = ft.border.all(2, border_c)
         self.spend_result.content = ft.Column([
             ft.Row([ft.Icon(ft.Icons.WARNING_AMBER), ft.Text(status, weight=ft.FontWeight.BOLD)], spacing=8),
-            ft.Text(f"Puedes hacer este gasto, representa el {perc*100:.1f}% de tus ingresos." if status != "No recomendado" else f"Este gasto representa el {perc*100:.1f}% de tus ingresos, considera reducirlo."),
+            ft.Text(
+                f"Puedes hacer este gasto, representa el {perc*100:.1f}% de tus ingresos." if status == "Seguro" else (
+                    f"Procede con precaución: representa el {perc*100:.1f}% de tus ingresos." if status == "Procede con Precaución" else f"No recomendado: representa el {perc*100:.1f}% de tus ingresos."
+                )
+            ),
         ], spacing=6)
         self.impact_rows.controls = [
-            ft.Row([ft.Text("Balance actual"), ft.Text(f"${balance_m:.2f}")], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            ft.Row([ft.Text("Después del gasto"), ft.Text(f"${new_balance:.2f}")], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Row([ft.Text("Balance actual"), ft.Text(f"${savings_m:.2f}", color=(ft.Colors.GREEN_400 if savings_m>=0 else ft.Colors.RED_400))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Row([ft.Text("Después del gasto"), ft.Text(f"${new_balance_real:.2f}", color=(ft.Colors.GREEN_400 if new_balance_real>=0 else ft.Colors.RED_400))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             ft.Row([ft.Text("Gastos fijos a cubrir"), ft.Text(f"${fixed_m:.2f}")], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            ft.Row([ft.Text("Margen de seguridad"), ft.Text(f"${max(margin,0.0):.2f}", color=(ft.Colors.GREEN_400 if margin>=0 else ft.Colors.RED_400))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Row([ft.Text("Margen de seguridad"), ft.Text(f"${margin:.2f}", color=(ft.Colors.GREEN_400 if margin>=0 else ft.Colors.RED_400))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         ]
         if getattr(self, "page", None) and self._mounted:
             self.page.update()
@@ -241,7 +270,8 @@ class ReportsView(ft.View):
         months = max((target.year - now_d.year) * 12 + (target.month - now_d.month), 1)
         need_pm = goal_amt / months if months > 0 else goal_amt
         proj_total = savings_m * months
-        pct = min(savings_m / need_pm, 1.0) if need_pm > 0 else 1.0
+        pct = (savings_m / need_pm) if need_pm > 0 else 1.0
+        pct = max(0.0, min(pct, 1.0))
         self.goal_progress.value = pct
         if savings_m >= need_pm:
             msg = ft.Text("Meta alcanzable", weight=ft.FontWeight.BOLD)

@@ -2,7 +2,7 @@
  * This enables basic offline use after first load.
  */
 
-const CACHE_NAME = "appfinanzas-runtime-v1";
+const CACHE_NAME = "flowly-runtime-v1";
 
 self.addEventListener("install", (event) => {
   // Optionally pre-cache minimal assets; keeping it light to avoid 404s.
@@ -12,7 +12,7 @@ self.addEventListener("install", (event) => {
       try {
         await cache.addAll([
           "/", // initial shell, if accessible
-          "/assets/manifest.webmanifest",
+          "/assets/manifest.json",
         ]);
       } catch (e) {
         // Ignore failures for optional resources.
@@ -64,4 +64,3 @@ self.addEventListener("fetch", (event) => {
     })()
   );
 });
-

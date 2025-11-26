@@ -1,4 +1,5 @@
 import os
+import sys
 import flet as ft
 from views.login_view import LoginView
 from views.signup_view import SignupView
@@ -23,15 +24,18 @@ def main(page: ft.Page):
                 value=(
                     """
 <script>
-// Registrar service worker si el navegador lo soporta.
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/assets/service-worker.js").catch(console.error);
 }
-// Enlazar manifest al <head> para PWA.
 (function(){
-  const link = document.createElement("link");
+  try {
+    document.querySelectorAll('link[rel="manifest"]').forEach(function(el){
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    });
+  } catch (e) {}
+  var link = document.createElement("link");
   link.rel = "manifest";
-  link.href = "/assets/manifest.webmanifest";
+  link.href = "/assets/manifest.json";
   document.head.appendChild(link);
 })();
 </script>
@@ -124,9 +128,10 @@ if ("serviceWorker" in navigator) {
 
     page.run_task(initialize_app)
 
+is_frozen = getattr(sys, "frozen", False)
 ft.app(
     target=main,
-    view=ft.AppView.WEB_BROWSER,
+    view=ft.AppView.FLET_APP if is_frozen else ft.AppView.WEB_BROWSER,
     assets_dir="assets",
     port=int(os.environ.get("PORT", 8000))
 )

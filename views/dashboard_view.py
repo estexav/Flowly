@@ -5,6 +5,17 @@ from utils.calculations import calculate_transaction_summary
 from utils.offline_store import get_cached_transactions, set_cached_transactions, sync_pending_transactions
 import datetime
 
+# --- INICIO DE CÓDIGO PARA NOTIFICACIONES PUSH ---
+import json
+import os
+from services.onesignal_client import OnesignalNotifications
+
+# Ruta del archivo (Debe coincidir con la de flask_backend.py)
+# Resuelve la ruta de forma robusta relativa al proyecto
+DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils", "flask", "onesignal_ids.json")
+# --- FIN DE CÓDIGO PARA NOTIFICACIONES PUSH ---
+
+
 class DashboardView(ft.View):
     def __init__(self, page: ft.Page):
         super().__init__()
@@ -13,6 +24,13 @@ class DashboardView(ft.View):
         self._mounted = False
         self.transactions = []
         self.recurrings = []
+        
+        # El user_id se establece en la sesión tras el login
+        self.user_id = self.page.session.get('user_id')
+
+        # --- INICIO DE INTEGRACIÓN DE NOTIFICACIONES ---
+        self.onesignal_client = OnesignalNotifications() 
+        # --- FIN DE INTEGRACIÓN DE NOTIFICACIONES ---
 
         self.type_filter = ft.Dropdown(
             label="Tipo",
@@ -29,7 +47,17 @@ class DashboardView(ft.View):
             width=260,
         )
 
-        self.appbar = ft.AppBar(title=ft.Text("FLOWLY"), actions=[])
+        self.appbar = ft.AppBar(
+            title=ft.Text("FLOWLY"), 
+            actions=[
+                # Botón para probar el envío de notificaciones
+                ft.IconButton(
+                    icon=ft.Icons.NOTIFICATIONS_ACTIVE,
+                    tooltip="Enviar Notificación Push de Prueba",
+                    on_click=self.send_push_notification
+                )
+            ]
+        )
 
         self.income_card = self._metric_card("Ingresos", ft.Icons.TRENDING_UP, ft.Colors.GREEN_700, "$0.00", "Total del mes")
         self.expense_card = self._metric_card("Gastos", ft.Icons.TRENDING_DOWN, ft.Colors.RED_700, "$0.00", "Total del mes")
@@ -69,6 +97,7 @@ class DashboardView(ft.View):
                 scroll=ft.ScrollMode.ADAPTIVE,
             )
         ]
+        
     def did_mount(self):
         self._mounted = True
         self.page.run_task(self.load_transactions)
@@ -255,5 +284,46 @@ class DashboardView(ft.View):
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
             )
             self.category_details.controls.append(ft.ProgressBar(value=v/total))
+            
+    # --- INICIO DE MÉTODOS PARA NOTIFICACIONES ---
 
+    def get_onesignal_id(self):
+        """Busca el onesignal_id asociado al user_id actual en el archivo JSON."""
+        user_id = self.page.session.get('user_id')
+        if not user_id:
+            return None
+        
+        if not os.path.exists(DATA_FILE):
+            return None
+        
+        try:
+            with open(DATA_FILE, 'r') as f:
+                id_map = json.load(f)
+            # Devuelve el ID de OneSignal asociado a este user_id
+            return id_map.get(user_id) 
+        except Exception as e:
+            print(f"Error al leer {DATA_FILE}: {e}")
+            return None
+
+    def send_push_notification(self, e):
+        """Maneja el clic y dispara la notificación."""
+        onesignal_id = self.get_onesignal_id()
+
+        if onesignal_id:
+            # Llamar al cliente para enviar la notificación (se ejecuta en el hilo principal de Flet)
+            response = self.onesignal_client.send(onesignal_id)
+            
+            if response and response.get('id'): # Verifica una respuesta exitosa
+                message = f"✅ Notificación enviada con éxito a {self.page.session.get('user_id')}."
+            else:
+                message = "❌ Error: Falló el envío de la notificación. Revisa la consola del servidor para detalles de la API."
+        else:
+            message = f"⚠️ Advertencia: No se encontró el OneSignal ID para el usuario {self.page.session.get('user_id')}. Inicia sesión en la app móvil."
+
+        # Muestra el resultado en un Snackbar
+        self.page.snack_bar = ft.SnackBar(ft.Text(message), open=True)
+        self.page.update()
+
+    # --- FIN DE MÉTODOS PARA NOTIFICACIONES ---
+    
     # Cerrar sesión se gestiona ahora desde ProfileView
